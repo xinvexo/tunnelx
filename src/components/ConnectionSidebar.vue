@@ -80,7 +80,7 @@
           :class="trafficClass(direction)"
           :d="trafficLinePath(direction)"
         />
-        <path v-if="memoryLinePath" class="memory-line" :d="memoryLinePath" />
+        <path v-if="memoryLinePath" class="traffic-line memory" :d="memoryLinePath" />
       </svg>
       <div class="meter-speeds mono" :class="{ 'memory-only': !settings.trafficStatsEnabled }">
         <TxTooltip v-if="settings.trafficStatsEnabled" class="meter-item down" :text="t('proxyList.traffic.down')" focusable>
@@ -698,11 +698,7 @@ function smoothPath(points: TrafficPathPoint[]): string {
 .traffic-chart .traffic-area.up { fill: var(--traffic-up); opacity: 0.12; }
 .traffic-chart .down { stroke: var(--traffic-down); }
 .traffic-chart .up { stroke: var(--traffic-up); }
-.traffic-chart .memory-line {
-  fill: none;
-  stroke: var(--runtime-memory);
-  opacity: 1;
-}
+.traffic-chart .memory { stroke: var(--runtime-memory); }
 .meter-speeds {
   min-width: 0;
   display: grid;
