@@ -427,7 +427,8 @@ function trafficClass(direction: TrafficDirection): 'down' | 'up' {
 }
 
 function trafficLinePath(direction: TrafficDirection): string {
-  const points = activeTrafficPathPoints(direction)
+  if (!settings.trafficStatsEnabled) return ''
+  const points = trafficPathPoints(direction)
   return points.length ? smoothPath(points) : ''
 }
 
