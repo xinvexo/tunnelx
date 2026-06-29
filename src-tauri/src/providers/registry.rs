@@ -407,14 +407,7 @@ pub fn settings_changed(
 }
 
 fn restart_active_tunnels_after_traffic_setting_change(app: &AppHandle, state: &AppState) {
-    let targets = state
-        .provider_runtime
-        .active_keys()
-        .into_iter()
-        .filter(|(provider_id, tunnel_id)| {
-            should_restart_for_traffic_setting(state, provider_id, tunnel_id)
-        })
-        .collect::<Vec<_>>();
+    let targets = traffic_setting_restart_targets(state);
     for (provider_id, tunnel_id) in targets {
         let app = app.clone();
         let state = state.clone();
@@ -424,13 +417,51 @@ fn restart_active_tunnels_after_traffic_setting_change(app: &AppHandle, state: &
     }
 }
 
+fn traffic_setting_restart_targets(state: &AppState) -> Vec<(String, String)> {
+    let mut seen = HashSet::new();
+    let mut targets = Vec::new();
+
+    for (provider_id, tunnel_id) in state.provider_runtime.active_keys() {
+        if should_restart_for_traffic_setting(state, &provider_id, &tunnel_id)
+            && seen.insert((provider_id.clone(), tunnel_id.clone()))
+        {
+            targets.push((provider_id, tunnel_id));
+        }
+    }
+
+    for tunnel_id in running_frp_tunnel_ids(state) {
+        let provider_id = FRP_PROVIDER_ID.to_string();
+        if should_restart_for_traffic_setting(state, &provider_id, &tunnel_id)
+            && seen.insert((provider_id.clone(), tunnel_id.clone()))
+        {
+            targets.push((provider_id, tunnel_id));
+        }
+    }
+
+    targets
+}
+
+fn running_frp_tunnel_ids(state: &AppState) -> Vec<String> {
+    let frp = frp_state(state);
+    let mut ids = frp
+        .runtime
+        .lock()
+        .instances
+        .iter()
+        .filter(|(_, instance)| instance.status.is_running())
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids
+}
+
 fn should_restart_for_traffic_setting(
     state: &AppState,
     provider_id: &str,
     tunnel_id: &str,
 ) -> bool {
     if provider_id == FRP_PROVIDER_ID {
-        return false;
+        return frp_state(state).runtime.status(tunnel_id).is_running();
     }
     let Ok(provider) = get(provider_id) else {
         return false;
@@ -935,24 +966,33 @@ mod tests {
     use crate::providers::frp::runtime_state::FrpcStatus;
 
     #[test]
-    fn traffic_setting_restart_skips_frp_hot_reload_provider() {
+    fn traffic_setting_restart_targets_running_frp_runtime() {
         let state = AppState::default();
-        state.provider_runtime.mark_running(
-            FRP_PROVIDER_ID,
-            "frp-1",
-            std::process::id(),
-            "running",
-        );
+        {
+            let frp = frp_state(&state);
+            let mut rt = frp.runtime.lock();
+            rt.instance_mut("frp-1").status = FrpcStatus::Running;
+            rt.instance_mut("frp-stopped").status = FrpcStatus::Stopped;
+        }
 
-        assert!(!should_restart_for_traffic_setting(
+        assert!(should_restart_for_traffic_setting(
             &state,
             FRP_PROVIDER_ID,
             "frp-1"
         ));
+        assert!(!should_restart_for_traffic_setting(
+            &state,
+            FRP_PROVIDER_ID,
+            "frp-stopped"
+        ));
+        assert_eq!(
+            traffic_setting_restart_targets(&state),
+            vec![(FRP_PROVIDER_ID.to_string(), "frp-1".to_string())]
+        );
     }
 
     #[test]
-    fn traffic_setting_restart_targets_running_non_frp_providers_only() {
+    fn traffic_setting_restart_targets_running_provider_runtime_connections() {
         let state = AppState::default();
         state.provider_runtime.mark_running(
             CLOUDFLARE_PROVIDER_ID,
@@ -971,6 +1011,10 @@ mod tests {
             CLOUDFLARE_PROVIDER_ID,
             "missing"
         ));
+        assert_eq!(
+            traffic_setting_restart_targets(&state),
+            vec![(CLOUDFLARE_PROVIDER_ID.to_string(), "cf-1".to_string())]
+        );
     }
 
     #[test]

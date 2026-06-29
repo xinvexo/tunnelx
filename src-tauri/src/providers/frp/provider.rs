@@ -82,29 +82,6 @@ impl TunnelProvider for FrpProvider {
         frp_process_ids(state)
     }
 
-    fn settings_changed(
-        &self,
-        ctx: ProviderContext<'_>,
-        previous: &crate::domain::AppSettings,
-        next: &crate::domain::AppSettings,
-    ) {
-        if previous.traffic_stats_enabled == next.traffic_stats_enabled {
-            return;
-        }
-        let profile_ids = {
-            let frp = frp_state(ctx.state);
-            let rt = frp.runtime.lock();
-            rt.instances
-                .iter()
-                .filter(|(_, inst)| inst.status.is_running())
-                .map(|(id, _)| id.clone())
-                .collect::<Vec<_>>()
-        };
-        for profile_id in profile_ids {
-            frpc_service::hot_reload(ctx.app, ctx.state, &profile_id);
-        }
-    }
-
     fn list_tunnels(&self, ctx: ProviderContext<'_>) -> AppResult<Vec<TunnelResource>> {
         Ok(ctx
             .state

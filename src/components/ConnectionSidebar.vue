@@ -65,7 +65,7 @@
 
     <div class="runtime-meter" :class="{ compact: !settings.trafficStatsEnabled }">
       <svg v-if="settings.trafficStatsEnabled" class="traffic-chart" viewBox="0 0 180 40" preserveAspectRatio="none" aria-hidden="true">
-        <path class="traffic-baseline" d="M 5 36 L 175 36" />
+        <path v-if="hasVisibleTraffic" class="traffic-baseline" d="M 5 36 L 175 36" />
         <path
           v-for="direction in trafficLayerOrder"
           :key="`${direction}-area`"
@@ -231,6 +231,9 @@ const totalUploadSpeed = computed(() => trafficTotals.value.upload)
 const trafficSeries = computed(() => trafficChart.value.series)
 const trafficMax = computed(() => trafficChart.value.max)
 const trafficLayerOrder = computed(() => trafficChart.value.layerOrder)
+const hasVisibleTraffic = computed(() =>
+  trafficSeries.value.some((sample) => sample.download > TRAFFIC_VISIBLE_MIN_VALUE || sample.upload > TRAFFIC_VISIBLE_MIN_VALUE),
+)
 const hasRecentTrafficHistory = computed(() =>
   settings.trafficStatsEnabled && trafficChart.value.latestSampleAt >= chartNow.value - TRAFFIC_WINDOW_MS,
 )
