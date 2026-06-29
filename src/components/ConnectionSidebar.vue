@@ -73,6 +73,7 @@
           :class="trafficClass(direction)"
           :d="trafficAreaPath(direction)"
         />
+        <path v-if="memoryAreaPath" class="traffic-area memory" :d="memoryAreaPath" />
         <path
           v-for="direction in trafficLayerOrder"
           :key="`${direction}-line`"
@@ -275,6 +276,11 @@ const shouldRunTrafficChartTimer = computed(() =>
 const memoryLinePath = computed(() => {
   const points = memoryPathPoints()
   return points.length ? smoothPath(points) : ''
+})
+const memoryAreaPath = computed(() => {
+  const points = memoryPathPoints()
+  if (!points.length) return ''
+  return `${smoothPath(points)} L ${points[points.length - 1].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} L ${points[0].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} Z`
 })
 
 function onDragPointerDown(item: { providerId: string; id: string }, event: PointerEvent) {
@@ -698,6 +704,7 @@ function smoothPath(points: TrafficPathPoint[]): string {
 }
 .traffic-chart .traffic-area.down { fill: var(--traffic-down); }
 .traffic-chart .traffic-area.up { fill: var(--traffic-up); opacity: 0.12; }
+.traffic-chart .traffic-area.memory { fill: var(--runtime-memory); }
 .traffic-chart .down { stroke: var(--traffic-down); }
 .traffic-chart .up { stroke: var(--traffic-up); }
 .traffic-chart .memory { stroke: var(--runtime-memory); }
