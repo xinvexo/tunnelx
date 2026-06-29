@@ -7,8 +7,6 @@ use super::contract::{
     PINGGY_PROVIDER_ID, TUNNEL_NAME_MAX_CHARS,
 };
 use super::cpolar::CpolarProvider;
-use super::frp::services::frpc_service;
-use super::frp::state::frp_state;
 use super::frp::FrpProvider;
 use super::ngrok::NgrokProvider;
 use super::pinggy::PinggyProvider;
@@ -377,19 +375,7 @@ pub fn auto_connect(app: &AppHandle, state: &AppState) {
 }
 
 pub fn active_tunnel_count(state: &AppState) -> usize {
-    state.provider_runtime.active_count() + active_frp_tunnel_count(state)
-}
-
-fn active_frp_tunnel_count(state: &AppState) -> usize {
-    let frp = frp_state(state);
-    let count = frp
-        .runtime
-        .lock()
-        .instances
-        .values()
-        .filter(|instance| instance.status.is_active())
-        .count();
-    count
+    state.provider_runtime.active_count()
 }
 
 pub fn settings_changed(
@@ -429,30 +415,7 @@ fn traffic_setting_restart_targets(state: &AppState) -> Vec<(String, String)> {
         }
     }
 
-    for tunnel_id in running_frp_tunnel_ids(state) {
-        let provider_id = FRP_PROVIDER_ID.to_string();
-        if should_restart_for_traffic_setting(state, &provider_id, &tunnel_id)
-            && seen.insert((provider_id.clone(), tunnel_id.clone()))
-        {
-            targets.push((provider_id, tunnel_id));
-        }
-    }
-
     targets
-}
-
-fn running_frp_tunnel_ids(state: &AppState) -> Vec<String> {
-    let frp = frp_state(state);
-    let mut ids = frp
-        .runtime
-        .lock()
-        .instances
-        .iter()
-        .filter(|(_, instance)| instance.status.is_running())
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
-    ids.sort();
-    ids
 }
 
 fn should_restart_for_traffic_setting(
@@ -460,9 +423,6 @@ fn should_restart_for_traffic_setting(
     provider_id: &str,
     tunnel_id: &str,
 ) -> bool {
-    if provider_id == FRP_PROVIDER_ID {
-        return frp_state(state).runtime.status(tunnel_id).is_running();
-    }
     let Ok(provider) = get(provider_id) else {
         return false;
     };
@@ -571,14 +531,6 @@ fn wait_for_inactive_target(
 pub fn stop_active_tunnels(app: &AppHandle, state: &AppState) {
     let targets = active_stop_targets(state);
     let stop_results = spawn_stop_requests(app, state, &targets);
-    if let Err(error) = frpc_service::stop_all(app, state) {
-        watchdog_log::danger(
-            app,
-            state,
-            Some("connection_stop_failed"),
-            format!("provider {FRP_PROVIDER_ID} stop all failed: {error}"),
-        );
-    }
     let remaining =
         wait_for_inactive_targets(state, &targets, exit_stop_wait_timeout(state, &targets));
     for (provider_id, tunnel_id, result) in stop_results.try_iter() {
@@ -963,17 +915,21 @@ mod tests {
 
     use crate::domain::AppData;
 
-    use crate::providers::frp::runtime_state::FrpcStatus;
-
     #[test]
-    fn traffic_setting_restart_targets_running_frp_runtime() {
+    fn traffic_setting_restart_targets_running_frp_provider_runtime() {
         let state = AppState::default();
-        {
-            let frp = frp_state(&state);
-            let mut rt = frp.runtime.lock();
-            rt.instance_mut("frp-1").status = FrpcStatus::Running;
-            rt.instance_mut("frp-stopped").status = FrpcStatus::Stopped;
-        }
+        state.provider_runtime.mark_running(
+            FRP_PROVIDER_ID,
+            "frp-1",
+            std::process::id(),
+            "running",
+        );
+        state.provider_runtime.mark_status(
+            FRP_PROVIDER_ID,
+            "frp-stopped",
+            TunnelRuntimeState::Stopped,
+            "stopped",
+        );
 
         assert!(should_restart_for_traffic_setting(
             &state,
@@ -1096,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn active_tunnel_count_includes_frp_runtime() {
+    fn active_tunnel_count_uses_provider_runtime_for_all_providers() {
         let state = AppState::default();
         state.provider_runtime.mark_status(
             PINGGY_PROVIDER_ID,
@@ -1104,11 +1060,12 @@ mod tests {
             TunnelRuntimeState::Running,
             "running",
         );
-        {
-            let frp = frp_state(&state);
-            let mut rt = frp.runtime.lock();
-            rt.instance_mut("frp-1").status = FrpcStatus::Running;
-        }
+        state.provider_runtime.mark_status(
+            FRP_PROVIDER_ID,
+            "frp-1",
+            TunnelRuntimeState::Running,
+            "running",
+        );
 
         assert_eq!(active_tunnel_count(&state), 2);
     }

@@ -101,7 +101,9 @@ fn emit_runtime_status_event<R: Runtime>(
     status: FrpcStatus,
     write_log: bool,
 ) {
-    let info = frp_runtime_info(state, profile_id, status);
+    let info = state
+        .provider_runtime
+        .sync_info(frp_runtime_info(state, profile_id, status));
     let _ = app.emit(
         "frpc-status-changed",
         StatusEvent {
@@ -2165,6 +2167,9 @@ mod tests {
             FrpcStatus::Starting
         );
         wait_for_status(&state, "p1", FrpcStatus::Running);
+        let provider_info = state.provider_runtime.info(FRP_PROVIDER_ID, "p1");
+        assert_eq!(provider_info.status, TunnelRuntimeState::Running);
+        assert_eq!(provider_info.pid, Some(4242));
 
         let cfg_path = {
             let frp = frp_state(&state);
@@ -2193,6 +2198,10 @@ mod tests {
             FrpcStatus::Stopping | FrpcStatus::Stopped
         ));
         wait_for_status(&state, "p1", FrpcStatus::Stopped);
+        assert_eq!(
+            state.provider_runtime.info(FRP_PROVIDER_ID, "p1").status,
+            TunnelRuntimeState::Stopped
+        );
         wait_for_watchdog_none(&state);
 
         let frp = frp_state(&state);

@@ -158,6 +158,19 @@ impl ProviderRuntimeState {
         instance.info()
     }
 
+    pub fn sync_info(&self, info: TunnelRuntimeInfo) -> TunnelRuntimeInfo {
+        let mut inner = self.lock();
+        let instance = inner.instance_mut(&info.provider_id, &info.tunnel_id);
+        instance.status = info.status;
+        instance.pid = info.pid;
+        instance.message = runtime_message(info.message);
+        instance.details = runtime_details(info.details);
+        if !info.status.is_active() {
+            instance.stop_timeout = None;
+        }
+        instance.info()
+    }
+
     pub fn mark_exit(
         &self,
         provider_id: &str,
@@ -368,6 +381,43 @@ mod tests {
             TunnelRuntimeState::Stopped,
             "stopped",
         );
+
+        assert_eq!(runtime.stop_timeout("provider-a", "conn-1"), None);
+    }
+
+    #[test]
+    fn sync_info_replaces_runtime_state() {
+        let runtime = ProviderRuntimeState::default();
+        runtime.set_stop_timeout("provider-a", "conn-1", Duration::from_secs(30));
+
+        let info = runtime.sync_info(TunnelRuntimeInfo {
+            provider_id: "provider-a".into(),
+            tunnel_id: "conn-1".into(),
+            status: TunnelRuntimeState::Running,
+            pid: Some(42),
+            message: "running".into(),
+            details: serde_json::json!({"publicUrl": "https://example.com"}),
+        });
+
+        assert_eq!(info.status, TunnelRuntimeState::Running);
+        assert_eq!(info.pid, Some(42));
+        assert_eq!(
+            info.details["publicUrl"],
+            serde_json::json!("https://example.com")
+        );
+        assert_eq!(
+            runtime.stop_timeout("provider-a", "conn-1"),
+            Some(Duration::from_secs(30))
+        );
+
+        runtime.sync_info(TunnelRuntimeInfo {
+            provider_id: "provider-a".into(),
+            tunnel_id: "conn-1".into(),
+            status: TunnelRuntimeState::Stopped,
+            pid: None,
+            message: "stopped".into(),
+            details: empty_details(),
+        });
 
         assert_eq!(runtime.stop_timeout("provider-a", "conn-1"), None);
     }
