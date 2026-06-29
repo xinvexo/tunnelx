@@ -201,7 +201,14 @@ jobs:
 
           VERSION="${RAW_VERSION#v}"
           RELEASE_TAG="v${VERSION}"
-          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          RELEASE_ID="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\" and .draft == true) | .id" |
+            head -n 1
+          )"
+          if [[ -z "${RELEASE_ID}" ]]; then
+            RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          fi
 
           gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
             --jq '.[] | select(.name | endswith(".sig")) | "\(.id)\t\(.name)"' |
@@ -230,7 +237,14 @@ jobs:
 
           VERSION="${RAW_VERSION#v}"
           RELEASE_TAG="v${VERSION}"
-          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          RELEASE_ID="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" \
+              --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\" and .draft == true) | .id" |
+            head -n 1
+          )"
+          if [[ -z "${RELEASE_ID}" ]]; then
+            RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+          fi
 
           gh api \
             --method PATCH \
