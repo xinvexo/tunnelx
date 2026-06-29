@@ -121,7 +121,7 @@ import { useProviderMetricsStore } from '@/providers/metrics'
 import { connectionKey, useConnectionStore } from '@/providers/connections'
 import { providerResourceTunnelCount } from '@/providers/registry'
 import { connectionPath } from '@/providers/routes'
-import type { TunnelRuntimeState } from '@/providers/contract'
+import type { MetricSample, TunnelRuntimeState } from '@/providers/contract'
 import { formatCompactSpeed, formatMemory } from '@/utils/format'
 
 const { t } = useI18n()
@@ -132,12 +132,16 @@ const providerMetrics = useProviderMetricsStore()
 const connections = useConnectionStore()
 const chartNow = ref(Date.now())
 const trafficScaleMax = ref(1)
+const memoryScaleMin = ref(0)
+const memoryScaleMax = ref(1)
+const trafficHistory = ref<MetricSample[]>([])
 const memoryHistory = ref<MemoryPoint[]>([])
 const appVisible = ref(typeof document === 'undefined' || !document.hidden)
 let metricsTimer: number | null = null
 let metricsTimerDelay = 0
 let trafficChartFrame: number | null = null
 let trafficScaleFrameAt = 0
+let memoryScaleFrameAt = 0
 let metricsRefreshInFlight = false
 const currentConnectionKey = computed(() => {
   const providerId = route.params.providerId as string | undefined
@@ -157,11 +161,15 @@ const sortable = useSortable({
 type TrafficDirection = 'download' | 'upload'
 type TrafficPoint = { timestamp: number; observedAt: number; download: number; upload: number }
 type TrafficPathPoint = { x: number; y: number; value: number }
-type MemoryPoint = { timestamp: number; bytes: number }
+type MemoryPoint = { timestamp: number; bytes: number; previousBytes: number; observedAt: number }
+type MemoryChartSample = { timestamp: number; bytes: number }
 const TRAFFIC_WINDOW_SECONDS = 30
 const TRAFFIC_WINDOW_MS = TRAFFIC_WINDOW_SECONDS * 1000
 const TRAFFIC_BUCKET_MS = 1000
+const TRAFFIC_HISTORY_KEEP_MS = TRAFFIC_WINDOW_MS + TRAFFIC_BUCKET_MS * 2
 const MEMORY_HISTORY_KEEP_MS = TRAFFIC_WINDOW_MS + TRAFFIC_BUCKET_MS * 2
+const MEMORY_VALUE_EASE_MS = 900
+const MEMORY_GAP_MS = TRAFFIC_BUCKET_MS * 3
 const TRAFFIC_CHART_LEFT = 5
 const TRAFFIC_CHART_WIDTH = 170
 const TRAFFIC_CHART_RIGHT = TRAFFIC_CHART_LEFT + TRAFFIC_CHART_WIDTH
@@ -201,7 +209,7 @@ const trafficChart = computed(() => {
   const sampleEnd = now + TRAFFIC_BUCKET_MS
   let latestSampleAt = 0
   if (settings.trafficStatsEnabled) {
-    for (const sample of providerMetrics.trafficHistory) {
+    for (const sample of trafficHistory.value) {
       latestSampleAt = Math.max(latestSampleAt, sample.timestamp)
       if (sample.timestamp < sampleStart || sample.timestamp > sampleEnd) continue
       const bucketTime = Math.floor(sample.timestamp / TRAFFIC_BUCKET_MS) * TRAFFIC_BUCKET_MS
@@ -244,29 +252,23 @@ const hasVisibleTraffic = computed(() =>
 const memoryChart = computed(() => {
   const now = chartNow.value
   const start = now - TRAFFIC_WINDOW_MS
-  const samples = memoryHistory.value.filter((sample) => sample.timestamp >= start - TRAFFIC_BUCKET_MS && sample.timestamp <= now + TRAFFIC_BUCKET_MS)
+  const samples = memoryHistory.value
+    .filter((sample) => sample.timestamp >= start - TRAFFIC_BUCKET_MS && sample.timestamp <= now + TRAFFIC_BUCKET_MS)
+    .map((sample) => ({ timestamp: sample.timestamp, bytes: memoryDisplayValue(sample, now) }))
   const latestSampleAt = samples.reduce((latest, sample) => Math.max(latest, sample.timestamp), 0)
   if (!samples.length) {
     return { samples, min: 0, max: 1, latestSampleAt }
   }
-  let min = Math.min(...samples.map((sample) => sample.bytes))
-  let max = Math.max(...samples.map((sample) => sample.bytes))
-  const minRange = Math.max(max * 0.08, 1024 * 1024)
-  if (max - min < minRange) {
-    const middle = (min + max) / 2
-    min = Math.max(0, middle - minRange / 2)
-    max = middle + minRange / 2
-  }
-  return { samples, min, max, latestSampleAt }
+  return { ...memorySampleRange(samples), samples, latestSampleAt }
 })
 const hasVisibleMemory = computed(() => memoryChart.value.samples.length > 0)
 const hasVisibleChartData = computed(() => hasVisibleTraffic.value || hasVisibleMemory.value)
-const hasRecentMemoryHistory = computed(() => memoryChart.value.latestSampleAt >= chartNow.value - TRAFFIC_WINDOW_MS)
+const hasRecentMemoryHistory = computed(() => memoryChart.value.latestSampleAt >= chartNow.value - MEMORY_HISTORY_KEEP_MS)
 const shouldShowRuntimeChart = computed(() =>
   settings.trafficStatsEnabled || hasVisibleMemory.value || providerMetrics.appMemoryBytes != null,
 )
 const hasRecentTrafficHistory = computed(() =>
-  settings.trafficStatsEnabled && trafficChart.value.latestSampleAt >= chartNow.value - TRAFFIC_WINDOW_MS,
+  settings.trafficStatsEnabled && trafficChart.value.latestSampleAt >= chartNow.value - TRAFFIC_HISTORY_KEEP_MS,
 )
 const shouldRunTrafficChartTimer = computed(() =>
   appVisible.value
@@ -274,13 +276,12 @@ const shouldRunTrafficChartTimer = computed(() =>
   && ((settings.trafficStatsEnabled && (hasRunningConnections.value || hasRecentTrafficHistory.value)) || hasRecentMemoryHistory.value),
 )
 const memoryLinePath = computed(() => {
-  const points = memoryPathPoints()
-  return points.length ? smoothPath(points) : ''
+  const paths = memoryPathSegments().map((points) => smoothPath(points)).filter(Boolean)
+  return paths.join(' ')
 })
 const memoryAreaPath = computed(() => {
-  const points = memoryPathPoints()
-  if (!points.length) return ''
-  return `${smoothPath(points)} L ${points[points.length - 1].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} L ${points[0].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} Z`
+  const paths = memoryPathSegments().map((points) => trafficAreaPathFromPoints(points)).filter(Boolean)
+  return paths.join(' ')
 })
 
 function onDragPointerDown(item: { providerId: string; id: string }, event: PointerEvent) {
@@ -316,6 +317,7 @@ async function refreshMetrics() {
   try {
     await providerMetrics.refresh()
     chartNow.value = Date.now()
+    recordTrafficSamples()
     recordMemorySample()
     syncRuntimeTimers()
   } catch {
@@ -350,6 +352,7 @@ function startTrafficChartTimer() {
     const now = Date.now()
     chartNow.value = now
     syncTrafficScaleMax(now)
+    syncMemoryScaleRange(now)
     trafficChartFrame = shouldRunTrafficChartTimer.value
       ? window.requestAnimationFrame(tick)
       : null
@@ -362,6 +365,7 @@ function stopTrafficChartTimer() {
   window.cancelAnimationFrame(trafficChartFrame)
   trafficChartFrame = null
   trafficScaleFrameAt = 0
+  memoryScaleFrameAt = 0
 }
 
 function syncRuntimeTimers() {
@@ -384,9 +388,11 @@ watch([hasRunningConnections, shouldRunTrafficChartTimer], syncRuntimeTimers)
 watch(metricsPollMs, () => {
   if (appVisible.value) startMetricsTimer()
 })
-watch(trafficMax, () => {
+watch([trafficMax, () => memoryChart.value.min, () => memoryChart.value.max], () => {
   if (trafficChartFrame == null) {
-    trafficScaleMax.value = trafficDisplayMax(Date.now())
+    const now = Date.now()
+    trafficScaleMax.value = trafficDisplayMax(now)
+    resetMemoryScaleRange()
   }
 })
 
@@ -422,6 +428,40 @@ function trafficDisplayValue(sample: TrafficPoint, direction: TrafficDirection, 
   return value * eased
 }
 
+function memoryDisplayValue(sample: MemoryPoint, now: number): number {
+  const age = now - sample.observedAt
+  if (age >= MEMORY_VALUE_EASE_MS) return sample.bytes
+  const progress = Math.max(0, age) / MEMORY_VALUE_EASE_MS
+  const eased = progress * progress * (3 - 2 * progress)
+  return sample.previousBytes + (sample.bytes - sample.previousBytes) * eased
+}
+
+function syncMemoryScaleRange(now: number) {
+  const target = { min: memoryChart.value.min, max: memoryChart.value.max }
+  if (!hasVisibleMemory.value || memoryScaleFrameAt === 0 || memoryScaleMax.value <= memoryScaleMin.value) {
+    memoryScaleMin.value = target.min
+    memoryScaleMax.value = target.max
+    memoryScaleFrameAt = now
+    return
+  }
+
+  const elapsed = Math.min(250, Math.max(0, now - memoryScaleFrameAt))
+  const factor = 1 - Math.exp(-elapsed / TRAFFIC_SCALE_DECAY_MS)
+  const currentMin = memoryScaleMin.value
+  const currentMax = memoryScaleMax.value
+  const nextMin = currentMin + (target.min - currentMin) * factor
+  const nextMax = currentMax + (target.max - currentMax) * factor
+  memoryScaleMin.value = target.min < currentMin ? target.min : nextMin
+  memoryScaleMax.value = target.max > currentMax ? target.max : nextMax
+  memoryScaleFrameAt = now
+}
+
+function resetMemoryScaleRange() {
+  memoryScaleMin.value = memoryChart.value.min
+  memoryScaleMax.value = memoryChart.value.max
+  memoryScaleFrameAt = Date.now()
+}
+
 function trafficClass(direction: TrafficDirection): 'down' | 'up' {
   return direction === 'download' ? 'down' : 'up'
 }
@@ -435,21 +475,79 @@ function trafficLinePath(direction: TrafficDirection): string {
 function trafficAreaPath(direction: TrafficDirection): string {
   const points = activeTrafficPathPoints(direction)
   if (!points.length) return ''
+  return trafficAreaPathFromPoints(points)
+}
+
+function trafficAreaPathFromPoints(points: TrafficPathPoint[]): string {
+  if (!points.length) return ''
   return `${smoothPath(points)} L ${points[points.length - 1].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} L ${points[0].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} Z`
 }
 
-function memoryPathPoints(): TrafficPathPoint[] {
-  const { samples, min, max } = memoryChart.value
+function memoryPathSegments(): TrafficPathPoint[][] {
+  const { samples } = memoryChart.value
   if (!samples.length) return []
+  const min = memoryScaleFrameAt === 0 ? memoryChart.value.min : memoryScaleMin.value
+  const max = memoryScaleFrameAt === 0 ? memoryChart.value.max : memoryScaleMax.value
   const scale = Math.max(1, max - min)
   const now = chartNow.value
   const start = now - TRAFFIC_WINDOW_MS
-  const points = samples.map((sample) => {
+  const segments: TrafficPathPoint[][] = []
+  let current: TrafficPathPoint[] = []
+  let previousTimestamp = 0
+
+  for (const sample of samples) {
+    if (previousTimestamp > 0 && sample.timestamp - previousTimestamp > MEMORY_GAP_MS) {
+      pushMemoryPathSegment(segments, current, false)
+      current = []
+    }
     const x = TRAFFIC_CHART_LEFT + ((sample.timestamp - start) / TRAFFIC_WINDOW_MS) * TRAFFIC_CHART_WIDTH
     const y = TRAFFIC_CHART_BASELINE - ((sample.bytes - min) / scale) * TRAFFIC_CHART_RANGE
-    return { x, y, value: sample.bytes }
-  })
-  return clipTrafficPathPoints(points)
+    current.push({ x, y, value: sample.bytes })
+    previousTimestamp = sample.timestamp
+  }
+
+  const latestSample = samples[samples.length - 1]
+  const extendLatest = latestSample ? now - latestSample.timestamp <= TRAFFIC_BUCKET_MS * 1.5 : false
+  pushMemoryPathSegment(segments, current, extendLatest)
+  return segments
+}
+
+function pushMemoryPathSegment(segments: TrafficPathPoint[][], points: TrafficPathPoint[], extendRight: boolean) {
+  if (!points.length) return
+  const next = [...points]
+  const last = next[next.length - 1]
+  if (extendRight && last.x < TRAFFIC_CHART_RIGHT) {
+    next.push({ ...last, x: TRAFFIC_CHART_RIGHT })
+  } else if (extendRight && next.length === 1) {
+    next.unshift({ ...last, x: Math.max(TRAFFIC_CHART_LEFT, TRAFFIC_CHART_RIGHT - TRAFFIC_CHART_WIDTH / TRAFFIC_WINDOW_SECONDS) })
+  }
+  const clipped = clipMemoryPathPoints(next)
+  if (clipped.length) {
+    segments.push(clipped)
+  }
+}
+
+function clipMemoryPathPoints(points: TrafficPathPoint[]): TrafficPathPoint[] {
+  if (!points.length) return []
+  const clipped: TrafficPathPoint[] = []
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]
+    const previous = points[index - 1]
+    if (previous) {
+      const crossesLeft = previous.x < TRAFFIC_CHART_LEFT && point.x >= TRAFFIC_CHART_LEFT
+      const crossesRight = previous.x <= TRAFFIC_CHART_RIGHT && point.x > TRAFFIC_CHART_RIGHT
+      if (crossesLeft) {
+        clipped.push(interpolateTrafficPoint(previous, point, TRAFFIC_CHART_LEFT))
+      }
+      if (crossesRight) {
+        clipped.push(interpolateTrafficPoint(previous, point, TRAFFIC_CHART_RIGHT))
+      }
+    }
+    if (point.x >= TRAFFIC_CHART_LEFT && point.x <= TRAFFIC_CHART_RIGHT) {
+      clipped.push(point)
+    }
+  }
+  return clipped.filter((point, index) => index === 0 || Math.abs(point.x - clipped[index - 1].x) > 0.001)
 }
 
 function recordMemorySample() {
@@ -458,12 +556,64 @@ function recordMemorySample() {
   const bytes = runtime.appMemoryBytes
   if (bytes == null || !Number.isFinite(bytes)) return
   const timestamp = Number.isFinite(runtime.collectedAt) ? runtime.collectedAt : Date.now()
+  const previous = lastMemoryPointBefore(timestamp)
   const cutoff = timestamp - MEMORY_HISTORY_KEEP_MS
   const next = memoryHistory.value
     .filter((sample) => sample.timestamp >= cutoff && sample.timestamp !== timestamp)
-    .concat({ timestamp, bytes })
+    .concat({
+      timestamp,
+      bytes,
+      previousBytes: previous?.bytes ?? bytes,
+      observedAt: timestamp,
+    })
     .sort((a, b) => a.timestamp - b.timestamp)
   memoryHistory.value = next
+}
+
+function lastMemoryPointBefore(timestamp: number): MemoryPoint | null {
+  for (let index = memoryHistory.value.length - 1; index >= 0; index -= 1) {
+    const sample = memoryHistory.value[index]
+    if (sample.timestamp < timestamp) return sample
+  }
+  return null
+}
+
+function memorySampleRange(samples: MemoryChartSample[]): { min: number; max: number } {
+  let min = Math.min(...samples.map((sample) => sample.bytes))
+  let max = Math.max(...samples.map((sample) => sample.bytes))
+  const minRange = Math.max(max * 0.08, 1024 * 1024)
+  if (max - min < minRange) {
+    const middle = (min + max) / 2
+    min = Math.max(0, middle - minRange / 2)
+    max = middle + minRange / 2
+  }
+  return { min, max }
+}
+
+function recordTrafficSamples() {
+  if (!settings.trafficStatsEnabled) {
+    trafficHistory.value = []
+    return
+  }
+  const collectedAt = providerMetrics.runtime?.collectedAt
+  const now = typeof collectedAt === 'number' && Number.isFinite(collectedAt) ? collectedAt : Date.now()
+  const cutoff = now - TRAFFIC_HISTORY_KEEP_MS
+  const samples = new Map<string, MetricSample>()
+  for (const sample of trafficHistory.value) {
+    if (sample.timestamp >= cutoff) {
+      samples.set(trafficSampleKey(sample), sample)
+    }
+  }
+  for (const sample of providerMetrics.trafficHistory) {
+    if (sample.timestamp >= cutoff) {
+      samples.set(trafficSampleKey(sample), sample)
+    }
+  }
+  trafficHistory.value = Array.from(samples.values()).sort((a, b) => a.timestamp - b.timestamp)
+}
+
+function trafficSampleKey(sample: MetricSample): string {
+  return `${sample.tunnelId}\u001f${sample.timestamp}`
 }
 
 function activeTrafficPathPoints(direction: TrafficDirection): TrafficPathPoint[] {
@@ -524,6 +674,16 @@ function trafficPointAtX(points: TrafficPathPoint[], x: number): TrafficPathPoin
     }
   }
   return { ...last, x }
+}
+
+function interpolateTrafficPoint(previous: TrafficPathPoint, next: TrafficPathPoint, x: number): TrafficPathPoint {
+  const span = next.x - previous.x
+  const progress = span <= 0 ? 0 : (x - previous.x) / span
+  return {
+    x,
+    y: previous.y + (next.y - previous.y) * progress,
+    value: previous.value + (next.value - previous.value) * progress,
+  }
 }
 
 function smoothPath(points: TrafficPathPoint[]): string {
