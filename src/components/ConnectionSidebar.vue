@@ -96,7 +96,9 @@
           </span>
         </TxTooltip>
         <TxTooltip class="meter-item" :text="t('connection.stats.memory')" focusable>
-          <span class="meter-value">{{ memoryText }}</span>
+          <span class="meter-content memory">
+            <span class="meter-value">{{ memoryText }}</span>
+          </span>
         </TxTooltip>
       </div>
     </div>
@@ -743,6 +745,7 @@ function smoothPath(points: TrafficPathPoint[]): string {
 }
 .meter-content.down { color: var(--traffic-down); }
 .meter-content.up { color: var(--traffic-up); }
+.meter-content.memory { color: var(--runtime-memory); }
 .bottom-nav {
   padding-top: 7px;
   border-top: 1px solid var(--tx-border-subtle);
