@@ -63,9 +63,9 @@
       </RouterLink>
     </div>
 
-    <div class="runtime-meter" :class="{ compact: !settings.trafficStatsEnabled }">
-      <svg v-if="settings.trafficStatsEnabled" class="traffic-chart" viewBox="0 0 180 40" preserveAspectRatio="none" aria-hidden="true">
-        <path v-if="hasVisibleTraffic" class="traffic-baseline" d="M 5 36 L 175 36" />
+    <div class="runtime-meter" :class="{ compact: !shouldShowRuntimeChart }">
+      <svg v-if="shouldShowRuntimeChart" class="traffic-chart" viewBox="0 0 180 40" preserveAspectRatio="none" aria-hidden="true">
+        <path v-if="hasVisibleChartData" class="traffic-baseline" d="M 5 36 L 175 36" />
         <path
           v-for="direction in trafficLayerOrder"
           :key="`${direction}-area`"
@@ -80,6 +80,8 @@
           :class="trafficClass(direction)"
           :d="trafficLinePath(direction)"
         />
+        <path v-if="hasVisibleMemory" class="memory-axis" d="M 176 8 L 176 36" />
+        <path v-if="memoryLinePath" class="memory-line" :d="memoryLinePath" />
       </svg>
       <div class="meter-speeds mono" :class="{ 'memory-only': !settings.trafficStatsEnabled }">
         <TxTooltip v-if="settings.trafficStatsEnabled" class="meter-item down" :text="t('proxyList.traffic.down')" focusable>
@@ -128,6 +130,7 @@ const providerMetrics = useProviderMetricsStore()
 const connections = useConnectionStore()
 const chartNow = ref(Date.now())
 const trafficScaleMax = ref(1)
+const memoryHistory = ref<MemoryPoint[]>([])
 const appVisible = ref(typeof document === 'undefined' || !document.hidden)
 let metricsTimer: number | null = null
 let metricsTimerDelay = 0
@@ -152,9 +155,11 @@ const sortable = useSortable({
 type TrafficDirection = 'download' | 'upload'
 type TrafficPoint = { timestamp: number; observedAt: number; download: number; upload: number }
 type TrafficPathPoint = { x: number; y: number; value: number }
+type MemoryPoint = { timestamp: number; bytes: number }
 const TRAFFIC_WINDOW_SECONDS = 30
 const TRAFFIC_WINDOW_MS = TRAFFIC_WINDOW_SECONDS * 1000
 const TRAFFIC_BUCKET_MS = 1000
+const MEMORY_HISTORY_KEEP_MS = TRAFFIC_WINDOW_MS + TRAFFIC_BUCKET_MS * 2
 const TRAFFIC_CHART_LEFT = 5
 const TRAFFIC_CHART_WIDTH = 170
 const TRAFFIC_CHART_RIGHT = TRAFFIC_CHART_LEFT + TRAFFIC_CHART_WIDTH
@@ -234,12 +239,42 @@ const trafficLayerOrder = computed(() => trafficChart.value.layerOrder)
 const hasVisibleTraffic = computed(() =>
   trafficSeries.value.some((sample) => sample.download > TRAFFIC_VISIBLE_MIN_VALUE || sample.upload > TRAFFIC_VISIBLE_MIN_VALUE),
 )
+const memoryChart = computed(() => {
+  const now = chartNow.value
+  const start = now - TRAFFIC_WINDOW_MS
+  const samples = memoryHistory.value.filter((sample) => sample.timestamp >= start - TRAFFIC_BUCKET_MS && sample.timestamp <= now + TRAFFIC_BUCKET_MS)
+  const latestSampleAt = samples.reduce((latest, sample) => Math.max(latest, sample.timestamp), 0)
+  if (!samples.length) {
+    return { samples, min: 0, max: 1, latestSampleAt }
+  }
+  let min = Math.min(...samples.map((sample) => sample.bytes))
+  let max = Math.max(...samples.map((sample) => sample.bytes))
+  const minRange = Math.max(max * 0.08, 1024 * 1024)
+  if (max - min < minRange) {
+    const middle = (min + max) / 2
+    min = Math.max(0, middle - minRange / 2)
+    max = middle + minRange / 2
+  }
+  return { samples, min, max, latestSampleAt }
+})
+const hasVisibleMemory = computed(() => memoryChart.value.samples.length > 0)
+const hasVisibleChartData = computed(() => hasVisibleTraffic.value || hasVisibleMemory.value)
+const hasRecentMemoryHistory = computed(() => memoryChart.value.latestSampleAt >= chartNow.value - TRAFFIC_WINDOW_MS)
+const shouldShowRuntimeChart = computed(() =>
+  settings.trafficStatsEnabled || hasVisibleMemory.value || providerMetrics.appMemoryBytes != null,
+)
 const hasRecentTrafficHistory = computed(() =>
   settings.trafficStatsEnabled && trafficChart.value.latestSampleAt >= chartNow.value - TRAFFIC_WINDOW_MS,
 )
 const shouldRunTrafficChartTimer = computed(() =>
-  appVisible.value && settings.trafficStatsEnabled && (hasRunningConnections.value || hasRecentTrafficHistory.value),
+  appVisible.value
+  && shouldShowRuntimeChart.value
+  && ((settings.trafficStatsEnabled && (hasRunningConnections.value || hasRecentTrafficHistory.value)) || hasRecentMemoryHistory.value),
 )
+const memoryLinePath = computed(() => {
+  const points = memoryPathPoints()
+  return points.length ? smoothPath(points) : ''
+})
 
 function onDragPointerDown(item: { providerId: string; id: string }, event: PointerEvent) {
   sortable.start(connectionKey(item.providerId, item.id), event)
@@ -273,6 +308,9 @@ async function refreshMetrics() {
   metricsRefreshInFlight = true
   try {
     await providerMetrics.refresh()
+    chartNow.value = Date.now()
+    recordMemorySample()
+    syncRuntimeTimers()
   } catch {
     providerMetrics.runtime = null
   } finally {
@@ -390,6 +428,34 @@ function trafficAreaPath(direction: TrafficDirection): string {
   const points = activeTrafficPathPoints(direction)
   if (!points.length) return ''
   return `${smoothPath(points)} L ${points[points.length - 1].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} L ${points[0].x.toFixed(1)} ${TRAFFIC_CHART_BASELINE.toFixed(1)} Z`
+}
+
+function memoryPathPoints(): TrafficPathPoint[] {
+  const { samples, min, max } = memoryChart.value
+  if (!samples.length) return []
+  const scale = Math.max(1, max - min)
+  const now = chartNow.value
+  const start = now - TRAFFIC_WINDOW_MS
+  const points = samples.map((sample) => {
+    const x = TRAFFIC_CHART_LEFT + ((sample.timestamp - start) / TRAFFIC_WINDOW_MS) * TRAFFIC_CHART_WIDTH
+    const y = TRAFFIC_CHART_BASELINE - ((sample.bytes - min) / scale) * TRAFFIC_CHART_RANGE
+    return { x, y, value: sample.bytes }
+  })
+  return clipTrafficPathPoints(points)
+}
+
+function recordMemorySample() {
+  const runtime = providerMetrics.runtime
+  if (!runtime) return
+  const bytes = runtime.appMemoryBytes
+  if (bytes == null || !Number.isFinite(bytes)) return
+  const timestamp = Number.isFinite(runtime.collectedAt) ? runtime.collectedAt : Date.now()
+  const cutoff = timestamp - MEMORY_HISTORY_KEEP_MS
+  const next = memoryHistory.value
+    .filter((sample) => sample.timestamp >= cutoff && sample.timestamp !== timestamp)
+    .concat({ timestamp, bytes })
+    .sort((a, b) => a.timestamp - b.timestamp)
+  memoryHistory.value = next
 }
 
 function activeTrafficPathPoints(direction: TrafficDirection): TrafficPathPoint[] {
@@ -589,6 +655,7 @@ function smoothPath(points: TrafficPathPoint[]): string {
 .runtime-meter {
   --traffic-down: #4b65d9;
   --traffic-up: #2b9aa0;
+  --runtime-memory: #9a6f2f;
   flex-shrink: 0;
   border-top: 1px solid var(--tx-border-subtle);
   margin-top: 7px;
@@ -632,6 +699,19 @@ function smoothPath(points: TrafficPathPoint[]): string {
 .traffic-chart .traffic-area.up { fill: var(--traffic-up); opacity: 0.12; }
 .traffic-chart .down { stroke: var(--traffic-down); }
 .traffic-chart .up { stroke: var(--traffic-up); }
+.traffic-chart .memory-line {
+  fill: none;
+  stroke: var(--runtime-memory);
+  stroke-width: 1.25;
+  stroke-dasharray: 2.5 2.5;
+  opacity: 0.95;
+}
+.traffic-chart .memory-axis {
+  fill: none;
+  stroke: var(--runtime-memory);
+  stroke-width: 1;
+  opacity: 0.45;
+}
 .meter-speeds {
   min-width: 0;
   display: grid;
