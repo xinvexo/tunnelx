@@ -1,0 +1,9 @@
+# cargo-audit 配置。被忽略的 advisory 必须在此说明理由，定期复查。
+[advisories]
+ignore = [
+    # rsa 0.9.10 Marvin 时序侧信道（无修复版本）。
+    # 仅作为 sqlx 未启用的 mysql feature 的传递依赖留在 Cargo.lock 里，
+    # 本应用只用 sqlite（见 src-tauri/Cargo.toml 的 features = ["sqlite"]），
+    # rsa 从不参与编译或运行（`cargo tree -i rsa` 为空）。属确认的误报。
+    "RUSTSEC-2023-0071",
+]

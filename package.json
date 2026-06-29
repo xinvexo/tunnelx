@@ -1,0 +1,67 @@
+{
+  "name": "tunnelx",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A desktop platform for managing multiple intranet tunnel providers.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xinvexo/tunnelx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xinvexo/tunnelx/issues"
+  },
+  "homepage": "https://github.com/xinvexo/tunnelx#readme",
+  "keywords": [
+    "frp",
+    "frpc",
+    "cloudflare",
+    "cloudflared",
+    "tunnel",
+    "gui",
+    "tauri",
+    "vue",
+    "rust",
+    "desktop-app",
+    "reverse-proxy"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build-icons.mjs && vite",
+    "build": "node scripts/build-icons.mjs && vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "build:watchdog": "node scripts/build-watchdog.mjs",
+    "check:scripts": "node --check scripts/build-icons.mjs && node --check scripts/build-watchdog.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "build:icons": "node scripts/build-icons.mjs",
+    "build:app-icons": "mkdir -p \"${TMPDIR:-/tmp}/tunnelx-clang-cache\" && CLANG_MODULE_CACHE_PATH=\"${TMPDIR:-/tmp}/tunnelx-clang-cache\" swift scripts/render-tunnelx-icons.swift"
+  },
+  "dependencies": {
+    "@iconify/vue": "^5.0.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "~2",
+    "@tauri-apps/plugin-dialog": "~2",
+    "@tauri-apps/plugin-opener": "^2",
+    "@unocss/reset": "^66.7.0",
+    "highlight.js": "^11.11.1",
+    "motion-v": "^2.2.1",
+    "pinia": "^3.0.4",
+    "reka-ui": "^2.9.9",
+    "vue": "^3.5.13",
+    "vue-i18n": "^11.4.5",
+    "vue-router": "4"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "^1.2.111",
+    "@iconify-json/simple-icons": "^1.2.87",
+    "@tauri-apps/cli": "^2.11.2",
+    "@types/node": "^25.9.3",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "~5.6.2",
+    "unocss": "^66.7.0",
+    "vite": "^6.0.3",
+    "vue-tsc": "^2.1.10"
+  }
+}

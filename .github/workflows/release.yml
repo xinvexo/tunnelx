@@ -1,0 +1,237 @@
+name: Release
+
+# 打 tag（v*）时触发，或手动输入版本号触发。构建六个平台包并发布到 GitHub Release。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example 0.2.0 or v0.2.0'
+        required: true
+        type: string
+      release_notes:
+        description: 'GitHub Release body'
+        required: true
+        type: string
+        default: 'See the assets below to download and install this version.'
+      prerelease:
+        description: 'Mark this release as a pre-release'
+        required: true
+        type: boolean
+        default: false
+      draft:
+        description: 'Create as draft instead of publishing immediately'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS Apple Silicon（原生）。
+          # 兼容下限由 tauri.conf.json 的 bundle.macOS.minimumSystemVersion 钉死，
+          - platform: macos-26
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          # macOS Intel（原生，最新 GA runner）。
+          - platform: macos-26-intel
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app,dmg
+          # Linux x86_64（原生，发布 AppImage、DEB、RPM；自动更新签名仍由 Tauri 生成）。
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: --target x86_64-unknown-linux-gnu --bundles appimage,deb,rpm
+          # Linux arm64（原生 ARM runner，发布 AppImage、DEB、RPM；自动更新签名仍由 Tauri 生成）。
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            args: --target aarch64-unknown-linux-gnu --bundles appimage,deb,rpm
+          # Windows x86_64（原生，只发布 NSIS setup.exe；自动更新签名仍由 Tauri 生成）。
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      # 抗 CI 网络抖动：crates.io 下载失败时多次重试，并用系统 git 拉取依赖
+      # （curl 在 Windows runner 上偶发 "Connection was reset"）。
+      CARGO_NET_RETRY: '10'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Prepare release metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+
+          const fromInput = process.env.EVENT_NAME === 'workflow_dispatch'
+          const rawVersion = (fromInput ? process.env.INPUT_VERSION : process.env.REF_NAME || '').trim()
+          const version = rawVersion.replace(/^v/i, '')
+          if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+            throw new Error(`Invalid release version: ${rawVersion}`)
+          }
+
+          function writeJsonVersion(path) {
+            const json = JSON.parse(fs.readFileSync(path, 'utf8'))
+            json.version = version
+            fs.writeFileSync(path, `${JSON.stringify(json, null, 2)}\n`)
+          }
+
+          writeJsonVersion('package.json')
+          writeJsonVersion('src-tauri/tauri.conf.json')
+
+          const cargoPath = 'src-tauri/Cargo.toml'
+          const cargo = fs.readFileSync(cargoPath, 'utf8')
+          fs.writeFileSync(
+            cargoPath,
+            cargo.replace(/^version\s*=\s*"[^"]+"/m, `version = "${version}"`),
+          )
+
+          const tag = `v${version}`
+          const notes = (process.env.INPUT_RELEASE_NOTES || '').trim()
+          const bodyDelimiter = `RELEASE_BODY_${Date.now()}`
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_VERSION=${version}\n`)
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_TAG=${tag}\n`)
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_NAME=TunnelX ${tag}\n`)
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_BODY<<${bodyDelimiter}\n${notes || 'See the assets below to download and install this version.'}\n${bodyDelimiter}\n`)
+          NODE
+
+      - name: Create release tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${RELEASE_TAG}"
+          git push origin "refs/tags/${RELEASE_TAG}" || echo "Tag ${RELEASE_TAG} may have been created by another matrix job."
+
+      # Linux 构建 Tauri 应用所需的系统依赖（WebKitGTK 等）。
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev \
+            rpm \
+            xdg-utils
+
+      - name: Setup pnpm
+        run: npm install -g pnpm@9
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          # 区分各 target，避免缓存串味。
+          key: ${{ matrix.target }}
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # tauri-action 会调用 beforeBuildCommand（先编 watchdog sidecar 再 build 前端），
+      # 并把 TAURI_ENV_TARGET_TRIPLE 传给 build:watchdog，从而编出匹配架构的 sidecar。
+      # 矩阵构建期间始终先写入 draft release，等所有平台成功后由 publish job 统一发布。
+      - name: Build release assets
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 自动更新签名：私钥与密码存在仓库 Secrets 中（见 README 发布说明）。
+          # 缺失时 createUpdaterArtifacts 仍会构建，但不会生成签名，客户端无法校验更新。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: true
+          prerelease: ${{ inputs.prerelease || false }}
+          releaseAssetNamePattern: '[name]_v[version]_[platform]_[arch][setup][ext]'
+          args: ${{ matrix.args }}
+
+  cleanup-signatures:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Remove standalone signature assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAW_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${RAW_VERSION#v}"
+          RELEASE_TAG="v${VERSION}"
+          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | select(.name | endswith(".sig")) | "\(.id)\t\(.name)"' |
+          while IFS=$'\t' read -r ASSET_ID ASSET_NAME; do
+            if [[ -n "${ASSET_ID}" ]]; then
+              echo "Deleting standalone signature asset: ${ASSET_NAME}"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${ASSET_ID}" >/dev/null
+            fi
+          done
+
+  publish:
+    needs: cleanup-signatures
+    if: github.event_name != 'workflow_dispatch' || inputs.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RAW_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+          PRERELEASE: ${{ inputs.prerelease || false }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${RAW_VERSION#v}"
+          RELEASE_TAG="v${VERSION}"
+          RELEASE_ID="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.id')"
+
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+            -F draft=false \
+            -F prerelease="${PRERELEASE}"

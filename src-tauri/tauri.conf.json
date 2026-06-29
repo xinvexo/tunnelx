@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TunnelX",
+  "version": "1.0.0",
+  "identifier": "com.xin.tunnelx",
+  "build": {
+    "beforeDevCommand": "pnpm build:watchdog && pnpm dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build:watchdog && pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "TunnelX",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/tunnelx-watchdog"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "sql": {
+      "preload": [
+        "sqlite:tunnelx-data.sqlite3"
+      ]
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/xinvexo/tunnelx/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZCNTRCNDRDQjZEQTBDQTQKUldTa0ROcTJUTFJVKzBOSEdkMEQyVk9UeUk5S2NZaklKV3F5bWNaWHNoUVorL1lZK3kwalNMUUEK"
+    }
+  }
+}

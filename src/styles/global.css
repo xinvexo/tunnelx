@@ -1,0 +1,199 @@
+:root {
+  color-scheme: light;
+  --tx-bg-app: #f4f5f7;
+  --tx-bg-sidebar: #eceef1;
+  --tx-bg-surface: #ffffff;
+  --tx-bg-elevated: #ffffff;
+  --tx-bg-hover: rgba(15, 23, 42, 0.045);
+  --tx-bg-hover-strong: rgba(15, 23, 42, 0.07);
+  --tx-bg-selected: rgba(37, 99, 235, 0.09);
+  --tx-border-subtle: rgba(15, 23, 42, 0.09);
+  --tx-border-strong: rgba(15, 23, 42, 0.16);
+  --tx-border-hover: rgba(15, 23, 42, 0.24);
+  --tx-text-primary: #171a21;
+  --tx-text-secondary: #667085;
+  --tx-text-muted: #98a2b3;
+  --tx-accent: #2563eb;
+  --tx-accent-hover: #1d4ed8;
+  --tx-accent-soft: rgba(37, 99, 235, 0.09);
+  --tx-accent-soft-hover: rgba(37, 99, 235, 0.13);
+  --tx-success: #16a34a;
+  --tx-success-hover: #15803d;
+  --tx-warning: #d97706;
+  --tx-danger: #dc2626;
+  --tx-danger-hover: #b91c1c;
+  --tx-danger-soft: rgba(220, 38, 38, 0.09);
+  --tx-danger-soft-hover: rgba(220, 38, 38, 0.13);
+  --tx-dark-bg-hover: #202631;
+  --tx-dark-border-hover: #465064;
+  --tx-dark-text-hover: #d5dbe4;
+  --tx-focus-ring: rgba(37, 99, 235, 0.16);
+  --tx-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --tx-mono: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --tx-radius-sm: 6px;
+  --tx-radius-md: 8px;
+  --tx-radius-lg: 10px;
+  --tx-shadow-float: 0 18px 48px rgba(15, 23, 42, 0.16), 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--tx-bg-app);
+  color: var(--tx-text-primary);
+  font-family: var(--tx-font);
+  font-size: 13px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--tx-mono);
+}
+
+input,
+textarea,
+pre,
+code,
+code *,
+[contenteditable='true'],
+.code-block,
+.code-block *,
+.logs,
+.message,
+.selectable,
+.text-content,
+p.selectable,
+span.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+button,
+a,
+label,
+img,
+svg,
+svg *,
+[role='button'],
+[role='switch'] {
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 指针拖拽排序（useSortable）：拖拽时锁选区，被拖项抬起。 */
+body.tx-sorting,
+body.tx-sorting * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+.tx-sort-lifted {
+  box-shadow: none;
+}
+body.tx-sorting .proxy-row:hover,
+body.tx-sorting .tx-sort-lifted {
+  background: var(--tx-bg-selected) !important;
+}
+
+.tx-input,
+.tx-textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--tx-border-strong);
+  border-radius: var(--tx-radius-sm);
+  background: var(--tx-bg-surface);
+  color: var(--tx-text-primary);
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.tx-input {
+  height: 32px;
+  padding: 0 9px;
+}
+
+.tx-textarea {
+  min-height: 76px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.tx-input:focus,
+.tx-textarea:focus {
+  border-color: var(--tx-accent);
+  box-shadow: 0 0 0 3px var(--tx-focus-ring);
+}
+
+.tx-input::placeholder,
+.tx-textarea::placeholder {
+  color: var(--tx-text-muted);
+}
+
+.tx-input:disabled,
+.tx-textarea:disabled {
+  cursor: not-allowed;
+  background: #f2f4f7;
+  color: var(--tx-text-muted);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.22);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.34);
+  background-clip: content-box;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.22);
+  background-clip: content-box;
+}
+
+.scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.34);
+  background-clip: content-box;
+}

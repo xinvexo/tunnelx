@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="app-icon-mask">
+      <rect x="90" y="90" width="844" height="844" rx="196"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#app-icon-mask)">
+    <rect x="90" y="90" width="844" height="844" fill="#fff"/>
+    <image href="./tunnelx-logo-flower.png" x="192" y="201" width="640" height="622" preserveAspectRatio="xMidYMid meet"/>
+  </g>
+</svg>

@@ -1,0 +1,93 @@
+name: CI
+
+# PR 与 main 推送时跑：类型检查 + 构建 + 格式 + clippy + 测试。
+# 多平台打包由 release.yml 在打 tag 时负责，这里只在单平台上做快速门禁。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 同一分支/PR 的旧运行自动取消，省 runner 时间。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      # 编译 Tauri 主程序所需的系统依赖（WebKitGTK 等），与 release.yml 保持一致。
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libssl-dev
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        run: npm install -g pnpm@9
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check local scripts
+        run: pnpm check:scripts
+
+      # 先编 watchdog sidecar：tauri-build 在 build.rs 阶段会校验 externalBin 是否存在，
+      # 不先生成的话下面的 cargo 步骤会失败。
+      - name: Build watchdog sidecar
+        run: pnpm build:watchdog
+
+      # 图标生成 + vue-tsc 类型检查 + vite 打包（pnpm build 一条龙）。
+      - name: Frontend typecheck & build
+        run: pnpm build
+
+      - name: Rust format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+  # 依赖漏洞扫描（RustSec advisory DB）。独立 job：只需 Cargo.lock，
+  # 不依赖 sidecar / WebKitGTK，和上面的 check 并行跑、快速反馈。
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # 预编译二进制，秒装，避免 cargo install 现编几分钟。
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - name: Cargo audit
+        run: cargo audit

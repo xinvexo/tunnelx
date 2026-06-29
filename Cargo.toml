@@ -1,0 +1,23 @@
+# 顶层 Cargo workspace。
+# - src-tauri：Tauri 主程序（package `tunnelx`）。
+# - tunnelx-watchdog-protocol：主程序与 sidecar 共用的行分隔 JSON 协议类型。
+# - tunnelx-watchdog：跨平台看门狗 sidecar（package `tunnelx-watchdog`），
+#   作为独立 crate 单独编译后，由 scripts/build-watchdog.mjs 拷到
+#   src-tauri/binaries/，再被 Tauri 当作 externalBin 打包。
+#
+# 之所以独立成 crate（而不是放进 src-tauri/src/bin/）：tauri-build 在 build.rs
+# 阶段会校验 externalBin 文件是否存在，而同包的 bin 要等到 build.rs 之后才编译，
+# 会形成死循环导致 `cargo check` 失败。独立 crate 可以先编译、再供主包校验。
+[workspace]
+resolver = "2"
+members = ["src-tauri", "tunnelx-watchdog", "tunnelx-watchdog-protocol"]
+
+# 发布体积优化（profile 必须在 workspace 根，成员里的会被忽略）。
+# 同时作用于主程序 tunnelx 与 watchdog sidecar——两者都进发布包。
+# 仅影响 release 构建（打 tag 时），CI 快速门禁走 debug 不受影响。
+# 注意：lto + codegen-units=1 会显著拉长 release 构建时间，换更小体积。
+# 不设 panic="abort"：本项目刻意做了 panic 规避/降级，保留 unwind 更稳。
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
