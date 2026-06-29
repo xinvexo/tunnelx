@@ -64,6 +64,7 @@ jobs:
       # （curl 在 Windows runner 上偶发 "Connection was reset"）。
       CARGO_NET_RETRY: '10'
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      CARGO_HTTP_MULTIPLEXING: 'false'
     steps:
       - uses: actions/checkout@v5
 
@@ -180,7 +181,8 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: true
           prerelease: ${{ inputs.prerelease || false }}
-          releaseAssetNamePattern: '[name]_v[version]_[platform]_[arch][setup][ext]'
+          assetNamePattern: '[name]_v[version]_[platform]_[arch][setup][ext]'
+          retryAttempts: 3
           args: ${{ matrix.args }}
 
   cleanup-signatures:

@@ -18,6 +18,10 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-22.04
+    env:
+      CARGO_NET_RETRY: '10'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      CARGO_HTTP_MULTIPLEXING: 'false'
     steps:
       - uses: actions/checkout@v5
 
@@ -81,6 +85,10 @@ jobs:
   # 不依赖 sidecar / WebKitGTK，和上面的 check 并行跑、快速反馈。
   audit:
     runs-on: ubuntu-22.04
+    env:
+      CARGO_NET_RETRY: '10'
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      CARGO_HTTP_MULTIPLEXING: 'false'
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
