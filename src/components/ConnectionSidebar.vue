@@ -80,7 +80,6 @@
           :class="trafficClass(direction)"
           :d="trafficLinePath(direction)"
         />
-        <path v-if="hasVisibleMemory" class="memory-axis" d="M 176 8 L 176 36" />
         <path v-if="memoryLinePath" class="memory-line" :d="memoryLinePath" />
       </svg>
       <div class="meter-speeds mono" :class="{ 'memory-only': !settings.trafficStatsEnabled }">
@@ -702,15 +701,7 @@ function smoothPath(points: TrafficPathPoint[]): string {
 .traffic-chart .memory-line {
   fill: none;
   stroke: var(--runtime-memory);
-  stroke-width: 1.25;
-  stroke-dasharray: 2.5 2.5;
-  opacity: 0.95;
-}
-.traffic-chart .memory-axis {
-  fill: none;
-  stroke: var(--runtime-memory);
-  stroke-width: 1;
-  opacity: 0.45;
+  opacity: 1;
 }
 .meter-speeds {
   min-width: 0;
