@@ -2021,6 +2021,10 @@ mod tests {
             "[web] start error: port already used".into(),
         );
         assert_eq!(frp_state(&state).runtime.status("p1"), FrpcStatus::Warning);
+        assert_eq!(
+            state.provider_runtime.info(FRP_PROVIDER_ID, "p1").status,
+            TunnelRuntimeState::Warning
+        );
     }
 
     #[cfg(unix)]
@@ -2055,14 +2059,27 @@ mod tests {
     }
 
     fn wait_for_status(state: &AppState, profile_id: &str, expected: FrpcStatus) {
+        let expected_runtime = frp_runtime_state(expected);
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if frp_state(state).runtime.status(profile_id) == expected {
+            let frp_status = frp_state(state).runtime.status(profile_id);
+            let provider_status = state
+                .provider_runtime
+                .info(FRP_PROVIDER_ID, profile_id)
+                .status;
+            if frp_status == expected && provider_status == expected_runtime {
                 return;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(frp_state(state).runtime.status(profile_id), expected);
+        assert_eq!(
+            state
+                .provider_runtime
+                .info(FRP_PROVIDER_ID, profile_id)
+                .status,
+            expected_runtime
+        );
     }
 
     fn parse_watchdog_frame_line(
