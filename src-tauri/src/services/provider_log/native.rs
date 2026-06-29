@@ -634,10 +634,7 @@ fn strip_known_native_prefixes<'a>(provider_id: &str, input: &'a str) -> &'a str
         other => other,
     };
     let mut rest = input.trim();
-    loop {
-        let Some((token, after)) = take_bracket_token(rest) else {
-            break;
-        };
+    while let Some((token, after)) = take_bracket_token(rest) {
         let normalized = token.trim().to_ascii_lowercase();
         if matches!(
             normalized.as_str(),
